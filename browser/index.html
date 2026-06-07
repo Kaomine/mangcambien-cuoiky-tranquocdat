@@ -1,53 +1,101 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
     <meta charset="utf-8">
-    <title>Browser inference demo</title>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phân loại hoa - SVTH: Trần Quốc Đạt - N23DCCI013</title>
+    
+    <script src="edge-impulse-standalone.js"></script>
+    <script src="run-impulse.js"></script>
+    
     <style>
-        #features {
-            width: 50%;
-            font-size: 18px;
-        }
-
-        #results {
-            font-family: monospace;
-            white-space: pre;
-        }
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 20px; }
+        video { border: 3px solid #4CAF50; border-radius: 10px; max-width: 100%; height: auto; }
+        #result { font-size: 24px; font-weight: bold; color: #d32f2f; margin-top: 20px; }
     </style>
 </head>
 <body>
-    <h1></h1>
 
-    <p>
-        <input type="text" id="features" placeholder="Paste your features here">
-    </p>
-    <p>
-        <button id="run-inference">Run inference</button>
-    </p>
-    <p id="results"></p>
+    <h2>Hệ thống AI Phân Loại Hoa (Hồng, Hướng Dương, Lan, Sen)</h2>
+    <p>Đưa bông hoa vào trước Camera để nhận diện</p>
 
-    <script src="edge-impulse-standalone.js"></script>
-    <script src="run-impulse.js"></script>
+    <video id="video" width="240" height="240" autoplay playsinline></video>
+    
+    <canvas id="canvas" width="96" height="96" style="display:none;"></canvas>
+    
+    <div id="result">Đang tải mô hình WebAssembly...</div>
+
     <script>
-        (async () => {
-            var classifier = new EdgeImpulseClassifier();
-            await classifier.init();
+        // 1. Khởi tạo mô hình
+        var classifier = new EdgeImpulseClassifier();
+        classifier.init().then(() => {
+            document.getElementById('result').innerText = "Mô hình sẵn sàng! Vui lòng cho phép bật Camera.";
+            startCamera();
+        }).catch(err => {
+            document.getElementById('result').innerText = "Lỗi tải mô hình: " + err;
+        });
 
-            let project = classifier.getProjectInfo();
-            document.querySelector('h1').textContent = project.owner + ' / ' + project.name + ' (version ' + project.deploy_version + ')';
+        // 2. Kích hoạt Camera (Ưu tiên camera sau trên điện thoại)
+        function startCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                .then(stream => {
+                    let video = document.getElementById('video');
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        // Chạy vòng lặp nhận diện liên tục 2 lần/giây
+                        setInterval(captureAndClassify, 500); 
+                    };
+                })
+                .catch(err => {
+                    document.getElementById('result').innerText = "Không thể mở Camera. Vui lòng cấp quyền!";
+                });
+        }
 
-            document.querySelector('#run-inference').onclick = () => {
-                try {
-                    let features = document.querySelector('#features').value.split(',').map(x => Number(x.trim()));
-                    let res = classifier.classify(features);
-                    document.querySelector('#results').textContent = JSON.stringify(res, null, 4);
+        // 3. Chụp ảnh, trích xuất đặc trưng và Suy luận
+        function captureAndClassify() {
+            let video = document.getElementById('video');
+            let canvas = document.getElementById('canvas');
+            // Đã thêm { willReadFrequently: true } để dập tắt cảnh báo màu vàng, giúp camera mượt hơn
+            let ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+            // Cắt khung hình từ Video đập vào Canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Bóc tách điểm ảnh RGB từ Canvas
+            let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            let features = [];
+            for (let i = 0; i < imgData.length; i += 4) {
+                let r = imgData[i];
+                let g = imgData[i+1];
+                let b = imgData[i+2];
+                // Chuyển đổi mã màu theo công thức chuẩn của mô hình
+                features.push((r << 16) | (g << 8) | b);
+            }
+
+            // Gọi bộ não AI để dự đoán (Đã sửa lại thành chạy đồng bộ, bỏ .then)
+            try {
+                let res = classifier.classify(features);
+                let bestLabel = "";
+                let highestVal = 0;
+                
+                // Tìm ra loài hoa có tỷ lệ chính xác cao nhất
+                if (res && res.results) {
+                    res.results.forEach(r => {
+                        if(r.value > highestVal) {
+                            highestVal = r.value;
+                            bestLabel = r.label;
+                        }
+                    });
+                    
+                    // In kết quả ra màn hình
+                    document.getElementById('result').innerText = 
+                        `Kết quả: ${bestLabel} (${(highestVal * 100).toFixed(1)}%)`;
                 }
-                catch (ex) {
-                    alert('Failed to classify: ' + (ex.message || ex.toString()));
-                }
-            };
-        })();
+            } catch (err) {
+                console.error("Lỗi suy luận:", err);
+            }
+        }
     </script>
 </body>
 </html>
